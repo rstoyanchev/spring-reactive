@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,13 @@ package org.springframework.http.server.reactive;
 
 import java.util.function.Supplier;
 
-import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ReactiveHttpOutputMessage;
 
 /**
- * Represents a "reactive" server-side HTTP response.
+ * Represents a reactive server-side HTTP response.
  *
  * @author Arjen Poutsma
  */
