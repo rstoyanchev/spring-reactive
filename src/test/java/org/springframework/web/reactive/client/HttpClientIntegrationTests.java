@@ -17,6 +17,7 @@
 package org.springframework.web.reactive.client;
 
 import static org.junit.Assert.*;
+import static org.springframework.web.client.RequestBuilders.get;
 
 import java.util.List;
 
@@ -35,9 +36,10 @@ import reactor.core.test.TestSubscriber;
 
 import org.springframework.core.codec.support.Pojo;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.reactive.ReactorHttpClientRequestFactory;
-import org.springframework.web.client.FluxResponseEntity;
 import org.springframework.web.client.HttpClient;
 import org.springframework.web.client.RequestBuilders;
 
@@ -63,9 +65,16 @@ public class HttpClientIntegrationTests {
 		this.server.enqueue(new MockResponse().setBody("Hello Spring!"));
 
 		Mono<String> result = this.httpClient
-				.perform(RequestBuilders.get(baseUrl.toString())
-						.header("X-Test-Header", "testvalue"))
-				.asMonoOf(String.class);
+				.perform(get(baseUrl.toString()).header("X-Test-Header", "testvalue"))
+				.doWithStatus(Consumer<HttpStatus>) //
+				.extract(body())			// Mono<T>
+				.extract(bodyStream())		// Flux<T>
+				.extract(response()) 		// Mono<ResponseEntity<T>>
+				.extract(responseStream)	// Mono<ResponseEntity<Flux<T>>>
+				.extract(headers())			// HttpHeaders
+				.extract(myExtract())
+
+
 
 		TestSubscriber<String> ts = new TestSubscriber();
 		result.subscribe(ts);
@@ -83,21 +92,20 @@ public class HttpClientIntegrationTests {
 		HttpUrl baseUrl = server.url("/greeting?name=Spring");
 		this.server.enqueue(new MockResponse().setHeader("Content-Type", "text/plain").setBody("Hello Spring!"));
 
-		Mono<FluxResponseEntity<String>> result = this.httpClient
-				.perform(RequestBuilders.get(baseUrl.toString())
+		Mono<ResponseEntity<Flux<String>>> result = this.httpClient
+				.perform(get(baseUrl.toString())
 						.accept(MediaType.TEXT_PLAIN))
-				.asResponse(String.class);
+				.asResponseStream(String.class);
 
-		TestSubscriber<String> ts = new TestSubscriber();
+		result.flatMap(fluxResponseEntity -> fluxResponseEntity.getBody());
 
-		Flux<String> response = result.flatMap(responseEntity -> {
-
+		TestSubscriber<ResponseEntity<String>> ts = new TestSubscriber<>();
+		result.subscribe(ts);
+		ts.awaitAndAssertValuesWith(responseEntity -> {
 			assertEquals(200, responseEntity.getStatusCode().value());
 			assertEquals("text/plain", responseEntity.getHeaders().getContentType().toString());
-			return responseEntity;
-		});
-		response.subscribe(ts);
-		ts.awaitAndAssertValues("Hello Spring!").assertComplete();
+			assertEquals("Hello Spring!", responseEntity.getBody());
+		}).assertComplete();
 		RecordedRequest request = server.takeRequest();
 		assertEquals("/greeting?name=Spring", request.getPath());
 		assertEquals("text/plain", request.getHeader(HttpHeaders.ACCEPT));
@@ -111,7 +119,7 @@ public class HttpClientIntegrationTests {
 				.setBody("{\"bar\":\"barbar\",\"foo\":\"foofoo\"}"));
 
 		Mono<Pojo> result = this.httpClient
-				.perform(RequestBuilders.get(baseUrl.toString())
+				.perform(get(baseUrl.toString())
 						.accept(MediaType.APPLICATION_JSON))
 				.asMonoOf(Pojo.class);
 
@@ -131,7 +139,7 @@ public class HttpClientIntegrationTests {
 				.setBody("[{\"bar\":\"bar1\",\"foo\":\"foo1\"},{\"bar\":\"bar2\",\"foo\":\"foo2\"}]"));
 
 		Flux<Pojo> result = this.httpClient
-				.perform(RequestBuilders.get(baseUrl.toString())
+				.perform(get(baseUrl.toString())
 						.accept(MediaType.APPLICATION_JSON))
 				.asFluxOf(Pojo.class);
 
@@ -155,7 +163,7 @@ public class HttpClientIntegrationTests {
 				.setBody("[{\"bar\":\"bar1\",\"foo\":\"foo1\"},{\"bar\":\"bar2\",\"foo\":\"foo2\"}]"));
 
 		Mono<List<Pojo>> result = this.httpClient
-				.perform(RequestBuilders.get(baseUrl.toString())
+				.perform(get(baseUrl.toString())
 						.accept(MediaType.APPLICATION_JSON))
 				.asMonoOf(List.class, Pojo.class);
 

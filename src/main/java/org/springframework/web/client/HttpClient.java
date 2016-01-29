@@ -17,10 +17,10 @@
 package org.springframework.web.client;
 
 import java.nio.charset.Charset;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -38,7 +38,9 @@ import org.springframework.core.codec.support.StringDecoder;
 import org.springframework.core.codec.support.StringEncoder;
 import org.springframework.core.io.buffer.DataBufferAllocator;
 import org.springframework.core.io.buffer.DefaultDataBufferAllocator;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.reactive.ClientHttpRequest;
 import org.springframework.http.client.reactive.ClientHttpRequestFactory;
 import org.springframework.http.client.reactive.ClientHttpResponse;
@@ -113,6 +115,8 @@ public final class HttpClient {
 		return new HttpClientExecution(builder);
 	}
 
+
+
 	/**
 	 * Perform the actual HTTP request/response exchange by building the HTTP request
 	 * using the provided {@code RequestBuilder} instance and decoding the response
@@ -127,56 +131,82 @@ public final class HttpClient {
 		}
 
 		/**
-		 * Fetch the HTTP response as a reactive stream of a {@link FluxResponseEntity}, which
-		 * contains the response headers and publishes the body.
+		 * Fetch the HTTP response as a {@link ResponseEntity}, which contains
+		 * the response headers and the body as a reactive stream.
 		 */
-		public <T> Mono<FluxResponseEntity<T>> asResponse(Class<?> sourceClass, Class<?>... generics) {
-
+		public <T> Mono<ResponseEntity<T>> asResponse(Class<?> sourceClass, Class<?>... generics) {
 			return asResponse(ResolvableType.forClassWithGenerics(sourceClass, generics));
 		}
 
-		protected <T> Mono<FluxResponseEntity<T>> asResponse(ResolvableType resolvableType) {
-
+		protected <T> Mono<ResponseEntity<T>> asResponse(ResolvableType resolvableType) {
 			return perform(this.builder, resolvableType);
+		}
+
+		/**
+		 * Fetch the HTTP response as a {@link ResponseEntity}, which contains
+		 * the response headers and the body as a reactive stream.
+		 */
+		public <T> Mono<ResponseEntity<Flux<T>>> asResponseStream(Class<?> sourceClass, Class<?>... generics) {
+			return asResponseStream(ResolvableType.forClassWithGenerics(sourceClass, generics));
+		}
+
+		protected <T> Mono<ResponseEntity<Flux<T>>> asResponseStream(ResolvableType resolvableType) {
+			return performStream(this.builder, resolvableType);
 		}
 
 		/**
 		 * Fetch the HTTP response as a reactive stream emitting a single element
 		 */
 		public <T> Mono<T> asMonoOf(Class<?> sourceClass, Class<?>... generics) {
-
 			return asMonoOf(ResolvableType.forClassWithGenerics(sourceClass, generics));
 		}
 
+		@SuppressWarnings("unchecked")
 		protected <T> Mono<T> asMonoOf(ResolvableType resolvableType) {
-
-			return Mono.from(asFluxOf(resolvableType));
+			return (Mono<T>) perform(this.builder, resolvableType);
 		}
 
 		/**
 		 * Fetch the HTTP response as a reactive stream emitting multiple elements
 		 */
 		public <T> Flux<T> asFluxOf(Class<?> sourceClass, Class<?>... generics) {
-
 			return asFluxOf(ResolvableType.forClassWithGenerics(sourceClass, generics));
 		}
 
+		@SuppressWarnings("unchecked")
 		protected <T> Flux<T> asFluxOf(ResolvableType resolvableType) {
-
-			return (Flux<T>) perform(this.builder, resolvableType).flatMap(clientResponseEntity -> clientResponseEntity);
+			return (Flux<T>) performStream(this.builder, resolvableType).flatMap(HttpEntity::getBody);
 		}
 
-		private <T> Mono<FluxResponseEntity<T>> perform(RequestBuilder builder, ResolvableType expectedResponseType) {
-			List<Object> hints = new ArrayList<>();
-			hints.add(UTF_8);
+		private <T> Mono<ResponseEntity<T>> perform(RequestBuilder builder, ResolvableType responseType) {
+			Object[] hints = new Object[] {UTF_8};
 			ClientHttpRequest request = builder.build(requestFactory);
 			writeRequestBody(request, builder);
+			return request.execute()
+					.log("org.springframework.http.client.reactive")
+					.then(response ->
+							// callbacks
+							Mono.when(
+							decodeResponseBody(responseType, hints, response).next(),
+							Mono.just(response.getHeaders()),
+							Mono.just(response.getStatusCode())))
+					.map(tuple -> {
+						//noinspection unchecked
+						return new ResponseEntity<T>((T) tuple.getT1(), tuple.getT2(), tuple.getT3());
+					});
+		}
 
-			return fetchAndDecodeResponse(request, expectedResponseType, hints);
+		private <T> Mono<ResponseEntity<Flux<T>>> performStream(RequestBuilder builder, ResolvableType responseType) {
+			Object[] hints = new Object[] {UTF_8};
+			ClientHttpRequest request = builder.build(requestFactory);
+			writeRequestBody(request, builder);
+			return request.execute()
+					.log("org.springframework.http.client.reactive")
+					.map(response -> new ResponseEntity<>(decodeResponseBody(responseType, hints, response),
+							response.getHeaders(), response.getStatusCode()));
 		}
 
 		private void writeRequestBody(ClientHttpRequest request, RequestBuilder builder) {
-
 			if (builder.getContent() != null) {
 				ResolvableType requestBodyType = ResolvableType.forInstance(builder.getContent());
 				MediaType mediaType = request.getHeaders().getContentType();
@@ -194,29 +224,22 @@ public final class HttpClient {
 			}
 		}
 
-		protected <T> Mono<FluxResponseEntity<T>> fetchAndDecodeResponse(ClientHttpRequest request,
-				ResolvableType expectedResponseType, List<Object> hints) {
+		private <T> Flux<T> decodeResponseBody(ResolvableType responseType, Object[] hints,
+				ClientHttpResponse response) {
 
-			return request.execute()
-					.log("org.springframework.http.client.reactive")
-					.map(clientHttpResponse -> {
-						MediaType contentType = resolveMediaType(clientHttpResponse);
-						Optional<Decoder<?>> decoder = resolveDecoder(expectedResponseType, contentType, hints.toArray());
-						if (decoder.isPresent()) {
-							return new FluxResponseEntity<T>(clientHttpResponse.getStatusCode(), clientHttpResponse.getHeaders(),
-									(Flux<T>) decoder.get().decode(clientHttpResponse.getBody(), expectedResponseType, contentType, hints.toArray()));
-						}
-						else {
-							throw new IllegalStateException("Return value type '" + expectedResponseType.toString() +
-									"' with content type '" + contentType + "' not supported");
-						}
-					});
+			MediaType contentType = response.getHeaders().getContentType();
+			Optional<Decoder<?>> decoder = resolveDecoder(responseType, contentType, hints);
+			if (!decoder.isPresent()) {
+				throw new IllegalStateException("Return value type '" + responseType.toString() +
+						"' with content type '" + contentType + "' not supported");
+			}
+			//noinspection unchecked
+			return (Flux<T>) decoder.get().decode(response.getBody(), responseType, contentType, hints);
 		}
 
-		private MediaType resolveMediaType(ClientHttpResponse response) {
-			return response.getHeaders().getContentType();
+		public <T> T extract(Function<ClientHttpResponse, T> extractor) {
+			return extractor.apply()
 		}
-
 	}
 
 	protected Optional<Decoder<?>> resolveDecoder(ResolvableType type, MediaType mediaType, Object[] hints) {
