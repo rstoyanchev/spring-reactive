@@ -29,19 +29,21 @@ import reactor.core.publisher.Mono;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.reactive.ReactorHttpClientRequestFactory;
 import org.springframework.http.server.reactive.AbstractHttpHandlerIntegrationTests;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.util.StringUtils;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.server.WebHandler;
+import org.springframework.web.client.reactive.WebClient;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebHandler;
 import org.springframework.web.server.adapter.WebHttpHandlerBuilder;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.springframework.web.client.reactive.HttpRequestBuilders.get;
+import static org.springframework.web.client.reactive.WebResponseExtractors.response;
 
 /**
  * Integration tests for with a server-side session.
@@ -50,7 +52,7 @@ import static org.junit.Assert.assertNull;
  */
 public class WebSessionIntegrationTests extends AbstractHttpHandlerIntegrationTests {
 
-	private RestTemplate restTemplate;
+	private WebClient webClient;
 
 	private DefaultWebSessionManager sessionManager;
 
@@ -60,13 +62,17 @@ public class WebSessionIntegrationTests extends AbstractHttpHandlerIntegrationTe
 	@Override
 	public void setup() throws Exception {
 		super.setup();
-		this.restTemplate = new RestTemplate();
+		this.webClient = new WebClient(new ReactorHttpClientRequestFactory());
 	}
 
 	protected URI createUri(String pathAndQuery) throws URISyntaxException {
+		return new URI(createUrl(pathAndQuery));
+	}
+
+	protected String createUrl(String pathAndQuery) throws URISyntaxException {
 		boolean prefix = !StringUtils.hasText(pathAndQuery) || !pathAndQuery.startsWith("/");
 		pathAndQuery = (prefix ? "/" + pathAndQuery : pathAndQuery);
-		return new URI("http://localhost:" + port + pathAndQuery);
+		return "http://localhost:" + port + pathAndQuery;
 	}
 
 	@Override
@@ -78,16 +84,16 @@ public class WebSessionIntegrationTests extends AbstractHttpHandlerIntegrationTe
 
 	@Test
 	public void createSession() throws Exception {
-		RequestEntity<Void> request = RequestEntity.get(createUri("/")).build();
-		ResponseEntity<Void> response = this.restTemplate.exchange(request, Void.class);
+		String url = createUrl("/");
+		ResponseEntity<Void> response = this.webClient.perform(get(url)).extract(response(Void.class)).get();
 
 		assertEquals(HttpStatus.OK, response.getStatusCode());
 		String id = extractSessionId(response.getHeaders());
 		assertNotNull(id);
 		assertEquals(1, this.handler.getCount());
 
-		request = RequestEntity.get(createUri("/")).header("Cookie", "SESSION=" + id).build();
-		response = this.restTemplate.exchange(request, Void.class);
+		response = this.webClient.perform(get(url).header("Cookie", "SESSION=" + id))
+				.extract(response(Void.class)).get();
 
 		assertEquals(HttpStatus.OK, response.getStatusCode());
 		assertNull(response.getHeaders().get("Set-Cookie"));
@@ -98,8 +104,8 @@ public class WebSessionIntegrationTests extends AbstractHttpHandlerIntegrationTe
 	public void expiredSession() throws Exception {
 
 		// First request: no session yet, new session created
-		RequestEntity<Void> request = RequestEntity.get(createUri("/")).build();
-		ResponseEntity<Void> response = this.restTemplate.exchange(request, Void.class);
+		String url = createUrl("/");
+		ResponseEntity<Void> response = this.webClient.perform(get(url)).extract(response(Void.class)).get();
 
 		assertEquals(HttpStatus.OK, response.getStatusCode());
 		String id = extractSessionId(response.getHeaders());
@@ -111,16 +117,16 @@ public class WebSessionIntegrationTests extends AbstractHttpHandlerIntegrationTe
 		this.sessionManager.setClock(Clock.offset(clock, Duration.ofMinutes(-31)));
 
 		// Second request: lastAccessTime updated (with offset clock)
-		request = RequestEntity.get(createUri("/")).header("Cookie", "SESSION=" + id).build();
-		response = this.restTemplate.exchange(request, Void.class);
+		response = this.webClient.perform(get(url).header("Cookie", "SESSION=" + id))
+				.extract(response(Void.class)).get();
 
 		assertEquals(HttpStatus.OK, response.getStatusCode());
 		assertNull(response.getHeaders().get("Set-Cookie"));
 		assertEquals(2, this.handler.getCount());
 
 		// Third request: new session replaces expired session
-		request = RequestEntity.get(createUri("/")).header("Cookie", "SESSION=" + id).build();
-		response = this.restTemplate.exchange(request, Void.class);
+		response = this.webClient.perform(get(url).header("Cookie", "SESSION=" + id))
+				.extract(response(Void.class)).get();
 
 		assertEquals(HttpStatus.OK, response.getStatusCode());
 		id = extractSessionId(response.getHeaders());
