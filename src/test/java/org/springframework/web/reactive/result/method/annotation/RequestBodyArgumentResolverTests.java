@@ -27,11 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-
 import javax.xml.bind.annotation.XmlRootElement;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -52,6 +50,7 @@ import org.springframework.core.convert.support.ReactiveStreamsToCompletableFutu
 import org.springframework.core.convert.support.ReactiveStreamsToRxJava1Converter;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.format.support.DefaultFormattingConversionService;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.reactive.CodecHttpMessageConverter;
@@ -170,7 +169,6 @@ public class RequestBodyArgumentResolverTests {
 	// TODO: @Ignore
 
 	@Test
-	@Ignore
 	public void list() throws Exception {
 		String body = "[{\"bar\":\"b1\",\"foo\":\"f1\"},{\"bar\":\"b2\",\"foo\":\"f2\"}]";
 		assertEquals(Arrays.asList(new TestBean("f1", "b1"), new TestBean("f2", "b2")),
@@ -178,7 +176,6 @@ public class RequestBodyArgumentResolverTests {
 	}
 
 	@Test
-	@Ignore
 	public void array() throws Exception {
 		String body = "[{\"bar\":\"b1\",\"foo\":\"f1\"},{\"bar\":\"b2\",\"foo\":\"f2\"}]";
 		assertArrayEquals(new TestBean[] {new TestBean("f1", "b1"), new TestBean("f2", "b2")},
@@ -201,7 +198,7 @@ public class RequestBodyArgumentResolverTests {
 	private RequestBodyArgumentResolver resolver(Decoder<?>... decoders) {
 		List<HttpMessageConverter<?>> converters = new ArrayList<>();
 		Arrays.asList(decoders).forEach(decoder -> converters.add(new CodecHttpMessageConverter<>(decoder)));
-		GenericConversionService service = new GenericConversionService();
+		GenericConversionService service = new DefaultFormattingConversionService();
 		service.addConverter(new ReactiveStreamsToCompletableFutureConverter());
 		service.addConverter(new ReactiveStreamsToRxJava1Converter());
 		return new RequestBodyArgumentResolver(converters, service);
@@ -245,7 +242,7 @@ public class RequestBodyArgumentResolverTests {
 
 
 	@XmlRootElement
-	static class TestBean {
+	public static class TestBean {
 
 		private String foo;
 

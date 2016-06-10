@@ -17,6 +17,7 @@
 package org.springframework.web.reactive.result.method.annotation;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.reactivestreams.Publisher;
@@ -26,6 +27,7 @@ import reactor.core.publisher.Mono;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.TypeDescriptor;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.reactive.HttpMessageConverter;
 import org.springframework.ui.ModelMap;
@@ -96,8 +98,19 @@ public class RequestBodyArgumentResolver implements HandlerMethodArgumentResolve
 			ServerWebExchange exchange) {
 
 		ResolvableType type = ResolvableType.forMethodParameter(parameter);
-		boolean asyncType = isAsyncType(type);
-		ResolvableType elementType = (asyncType ? type.getGeneric(0) : type);
+		boolean isAsyncType = isAsyncType(type);
+		ResolvableType elementType;
+
+		if (isAsyncType || isListOrSet(type)) {
+			elementType = type.getGeneric(0);
+		}
+		else if (type.getRawClass().isArray()) {
+			elementType = type.getComponentType();
+		}
+		else {
+			elementType = type;
+		}
+
 		MediaType mediaType = exchange.getRequest().getHeaders().getContentType();
 		if (mediaType == null) {
 			mediaType = MediaType.APPLICATION_OCTET_STREAM;
@@ -113,9 +126,20 @@ public class RequestBodyArgumentResolver implements HandlerMethodArgumentResolve
 				else if (Flux.class.equals(type.getRawClass())) {
 					return Mono.just(elementFlux);
 				}
-				else if (asyncType) {
+				else if (isAsyncType) {
 					Object value = getConversionService().convert(elementFlux, type.getRawClass());
 					return Mono.just(value);
+				}
+				else if (List.class.isAssignableFrom(type.getRawClass())) {
+					return elementFlux.collectList().map(o -> o);
+				}
+				else if (Set.class.isAssignableFrom(type.getRawClass())) {
+					return elementFlux.collect(Collectors.toSet()).map(o -> o);
+				}
+				else if (type.getRawClass().isArray()) {
+					return elementFlux.collectList().map(list ->
+							getConversionService().convert(list,
+									TypeDescriptor.forObject(list), new TypeDescriptor(parameter)));
 				}
 				else {
 					// TODO Currently manage only "Foo" parameter, not "List<Foo>" parameters, Stéphane is going to add toIterable/toIterator to Flux to support that use case
@@ -130,6 +154,10 @@ public class RequestBodyArgumentResolver implements HandlerMethodArgumentResolve
 	private boolean isAsyncType(ResolvableType type) {
 		return (Mono.class.equals(type.getRawClass()) || Flux.class.equals(type.getRawClass()) ||
 				getConversionService().canConvert(Publisher.class, type.getRawClass()));
+	}
+
+	private boolean isListOrSet(ResolvableType type) {
+		return (List.class.equals(type.getRawClass()) || Set.class.equals(type.getRawClass()));
 	}
 
 }
